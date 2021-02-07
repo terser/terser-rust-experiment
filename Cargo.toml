@@ -1,0 +1,24 @@
+[package]
+name = "js-gist"
+version = "0.1.0"
+authors = ["Fábio Santos <fabiosantosart@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+benchme = []
+
+[dependencies]
+swc_ecma_parser = "0.45.0"
+
+[dependencies.swc_common]
+version = "0.10"
+features = ["tty-emitter"]
+
+[[bin]]
+name = "benchme"
+test = false
+bench = false
+path = "src/lib.rs"
+required-features = ["benchme"]
