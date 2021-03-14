@@ -3,10 +3,10 @@ mod macros;
 
 mod call_terser;
 mod chunk;
+mod get_minified_chunks;
 mod to_segments;
 
 use call_terser::call_terser;
-use chunk::{tt, ChunkTree};
 use std::time::Instant;
 use to_segments::to_segments;
 
@@ -37,16 +37,11 @@ impl Drop for Timer {
 pub fn main() -> std::io::Result<()> {
     // Minify a big file
     let source = &std::fs::read_to_string(
-        "huge.js",
-        // "polyfill-mini.js",
+        // "huge.js",
+        "polyfill-mini.js",
     )?;
 
     let _timer = Timer::new("entire process");
-
-    let tokens = {
-        let _timer = Timer::new("tokenising");
-        &tt(source)
-    };
 
     let segments = {
         let _timer = Timer::new("calculating code segments");

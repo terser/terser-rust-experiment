@@ -25,6 +25,7 @@ pub enum OpenOrClose {
 #[cfg(not(test))]
 static MAX_COMBINED_SIZE: u32 = 50_000;
 #[cfg(not(test))]
+#[allow(dead_code)]
 static MAX_SIZE: u32 = 5_000;
 #[cfg(not(test))]
 static MIN_SIZE: u32 = 200;
@@ -33,6 +34,7 @@ static MIN_SIZE: u32 = 200;
 #[cfg(test)]
 static MAX_COMBINED_SIZE: u32 = 12;
 #[cfg(test)]
+#[allow(dead_code)]
 static MAX_SIZE: u32 = 10;
 #[cfg(test)]
 static MIN_SIZE: u32 = 4;

@@ -1,80 +1,77 @@
+use crate::get_minified_chunks::{get_minified_chunks, wrap_chunk_to_minify};
 use crate::to_segments::Segment;
 use crate::Timer;
 use std::collections::HashMap;
 use std::convert::AsRef;
 use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use threadpool::ThreadPool;
 
 // A chunk header can only be placed at the toplevel because of the export.
 // And it can't be found inside a comment or string, because it would need escaping
 
-#[cfg(not(test))]
-static CHUNK_HEADER: &str = "/*!// '\"`*/export async function*chunk";
-#[cfg(test)]
-static CHUNK_HEADER: &str = "function chunk";
-
-static CHUNK_END: &str = "END()";
+static PRELUDE_SIZE: usize = 32;
 
 #[cfg(not(test))]
 static WORKLOAD_MAX_LENGTH: usize = 420_000;
 #[cfg(test)]
 static WORKLOAD_MAX_LENGTH: usize = 10;
 
-fn execute_terser_process(seg_src: String) -> String {
+// Speak a simple protocol with terser_worker/worker.js
+fn execute_terser_process(
+    stdin: &mut ChildStdin,
+    stdout: &mut ChildStdout,
+    seg_src: String,
+) -> String {
     let _timer = Timer::new("actually calling terser");
 
-    let child_process = Command::new("terser")
-        .args(vec!["-c", "--timings"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .expect("spawn the terser process");
+    let writes_to_byte: &[u8] = seg_src.as_ref();
 
-    child_process
-        .stdin
-        .expect("child stdin is guaranteed")
-        .write(&seg_src.as_ref())
+    let prelude = format!("{}", writes_to_byte.len());
+    let prelude = format!("{}{}", prelude, " ".repeat(PRELUDE_SIZE - prelude.len()));
+
+    stdin
+        .write(&prelude.as_ref())
+        .expect("write prelude to worker");
+
+    stdin
+        .write(&writes_to_byte)
         .expect("write javascript to terser process");
 
-    let mut result = String::new();
-    child_process
-        .stdout
-        .expect("child stdout is guaranteed")
-        .read_to_string(&mut result)
+    let mut prelude = [0u8; 32];
+    stdout
+        .read_exact(&mut prelude)
+        .expect("read minified prelude");
+
+    let result_len = String::from_utf8(prelude.to_vec())
+        .unwrap()
+        .chars()
+        .fold(String::from(""), |accum, c| {
+            if c >= '0' && c <= '9' {
+                format!("{}{}", accum, c)
+            } else {
+                accum
+            }
+        })
+        .parse::<usize>()
+        .unwrap();
+
+    let mut result = vec![0; result_len];
+
+    stdout
+        .read_exact(&mut result)
         .expect("read javascript from terser process");
 
-    result
+    String::from_utf8(result.to_vec()).unwrap()
 }
 
-fn chunk_rope_to_string(rope: &Vec<Segment>, index: usize) -> String {
-    let rope_strings: Vec<String> = rope
-        .iter()
-        .map(|segment| match segment {
-            Segment::Str(s) => String::from(*s),
-            Segment::Ident(id) => format!("chunk{}()", id),
-        })
-        .collect();
-
-    format!(
-        "{}{}(){}\n\n{}\n\n{}{};",
-        CHUNK_HEADER,
-        index,
-        "{",
-        rope_strings.join(""),
-        "};",
-        CHUNK_END,
-    )
-}
-
-fn get_workloads(segments: Vec<Vec<Segment<'_>>>) -> Vec<String> {
+fn get_workloads(chunks: Vec<Vec<Segment<'_>>>) -> Vec<String> {
     let mut out = vec![];
-    let segments_iter = segments.into_iter();
 
     let mut buffer = String::from("");
-    for (index, rope) in segments_iter.enumerate() {
-        let segment = chunk_rope_to_string(&rope, index);
+    for (index, segment) in chunks.into_iter().enumerate() {
+        let segment = wrap_chunk_to_minify(&segment, index);
 
         if segment.len() + buffer.len() > WORKLOAD_MAX_LENGTH {
             let program_string = format!("{}{}", buffer, segment);
@@ -103,7 +100,16 @@ pub fn call_terser(segments: Vec<Vec<Segment<'_>>>) -> std::io::Result<String> {
         let local_results = shared_results.clone();
 
         pool.execute(move || {
-            let result = execute_terser_process(workload);
+            let child_process = Command::new("terser_worker/worker.js")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("spawn the terser process");
+
+            let mut stdin = child_process.stdin.expect("child stdin is guaranteed");
+            let mut stdout = child_process.stdout.expect("child stdout is guaranteed");
+
+            let result = execute_terser_process(&mut stdin, &mut stdout, workload);
             local_results.lock().unwrap().insert(local_index, result);
         });
     }
@@ -120,96 +126,4 @@ pub fn call_terser(segments: Vec<Vec<Segment<'_>>>) -> std::io::Result<String> {
     println!("finished {:?} jobs", result_list.len());
 
     Ok(String::from(""))
-}
-
-// In minified code, the chunk header (export function chunk{id}) is around our chunk
-// and we need to remove it
-fn strip_chunk_wrapper<'a>(chunk: &'a str) -> (usize, &'a str) {
-    assert_eq!(chunk.find(CHUNK_HEADER), Some(0));
-
-    // Trim header. After the header there's a number
-    let chunk = &chunk[CHUNK_HEADER.len()..];
-
-    let chunk_number = chunk
-        .chars()
-        .take_while(|&c| c >= '0' && c <= '9')
-        .collect::<String>()
-        .parse::<usize>()
-        .expect("bad chunk number");
-
-    // Trim
-    let chunk = match (chunk.find("{"), chunk.find("}")) {
-        (Some(start), Some(end)) if start < end => &chunk[start + 1..end],
-        _ => {
-            panic!("corrupted chunks")
-        }
-    };
-
-    (chunk_number, chunk)
-}
-
-fn get_minified_chunks<'a>(result: &'a str) -> HashMap<usize, &'a str> {
-    let mut results = HashMap::new();
-    let mut cursor = &result[..];
-
-    loop {
-        match (cursor.rfind(CHUNK_HEADER), cursor.rfind(CHUNK_END)) {
-            (Some(header_start_index), Some(chunk_end)) => {
-                let (chunk_id, result) =
-                    strip_chunk_wrapper(&cursor[header_start_index..chunk_end]);
-
-                results.insert(chunk_id, result);
-
-                cursor = &cursor[..header_start_index];
-            }
-            (None, None) => {
-                break;
-            }
-            _ => {
-                panic!("corrupted chunks");
-            }
-        };
-    }
-
-    results
-}
-
-#[test]
-fn test_extract_result_from_bounded_chunk() {
-    assert_eq!(
-        strip_chunk_wrapper("function chunk123(){};END();"),
-        (123, "")
-    );
-
-    assert_eq!(
-        strip_chunk_wrapper("function chunk42(){hi};END();"),
-        (42, "hi")
-    );
-}
-
-fn assert_chunks_eq(source: &str, expected_pairs: Vec<(usize, &str)>) {
-    let chunks = get_minified_chunks(source);
-    let expected_map: HashMap<usize, &str> = expected_pairs.into_iter().collect();
-
-    assert_eq!(chunks, expected_map);
-}
-
-#[test]
-fn test_get_result_map() {
-    assert_eq!(get_minified_chunks(""), HashMap::new());
-
-    assert_eq!(
-        get_minified_chunks("function chunk1(){hi}END()"),
-        vec![(1, "hi")].into_iter().collect()
-    );
-
-    assert_chunks_eq(
-        " trash function chunk1(){hi}; trashwithoutcurlybrace END(); trash ",
-        vec![(1, "hi")],
-    );
-
-    assert_chunks_eq(
-        " function chunk1(){hi}; END(); function chunk2() {world} END() ",
-        vec![(1, "hi"), (2, "world")],
-    );
 }
