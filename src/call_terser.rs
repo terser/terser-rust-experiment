@@ -6,7 +6,7 @@ use std::convert::AsRef;
 use std::io::{Read, Write};
 use std::process::{ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use threadpool::ThreadPool;
+use std::thread::spawn;
 
 // A chunk header can only be placed at the toplevel because of the export.
 // And it can't be found inside a comment or string, because it would need escaping
@@ -14,7 +14,7 @@ use threadpool::ThreadPool;
 static PRELUDE_SIZE: usize = 32;
 
 #[cfg(not(test))]
-static WORKLOAD_MAX_LENGTH: usize = 420_000;
+static WORKLOAD_MAX_LENGTH: usize = 300_000;
 #[cfg(test)]
 static WORKLOAD_MAX_LENGTH: usize = 10;
 
@@ -92,14 +92,20 @@ fn get_workloads(chunks: Vec<Vec<Segment<'_>>>) -> Vec<String> {
 }
 
 pub fn call_terser(segments: Vec<Vec<Segment<'_>>>) -> std::io::Result<String> {
-    let shared_results: Arc<Mutex<HashMap<usize, String>>> = Arc::new(Mutex::new(HashMap::new()));
-    let pool = ThreadPool::new(4);
+    let indexed_workloads = get_workloads(segments).into_iter().enumerate().collect();
 
-    for (index, workload) in get_workloads(segments).into_iter().enumerate() {
-        let local_index = index;
+    //let pool = ThreadPool::new(4);
+    let mut thread_joiners = vec![];
+
+    let shared_indexed_workloads: Arc<Mutex<Vec<(usize, String)>>> =
+        Arc::new(Mutex::new(indexed_workloads));
+    let shared_results: Arc<Mutex<HashMap<usize, String>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    for i in 0..4 {
+        let workloads = shared_indexed_workloads.clone();
         let local_results = shared_results.clone();
 
-        pool.execute(move || {
+        thread_joiners.push(spawn(move || {
             let child_process = Command::new("terser_worker/worker.js")
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -109,12 +115,24 @@ pub fn call_terser(segments: Vec<Vec<Segment<'_>>>) -> std::io::Result<String> {
             let mut stdin = child_process.stdin.expect("child stdin is guaranteed");
             let mut stdout = child_process.stdout.expect("child stdout is guaranteed");
 
-            let result = execute_terser_process(&mut stdin, &mut stdout, workload);
-            local_results.lock().unwrap().insert(local_index, result);
-        });
+            loop {
+                let popped = { workloads.lock().unwrap().pop() };
+                if let Some((index, workload)) = popped {
+                    println!("thread {} got task {}", i, index);
+
+                    let result = execute_terser_process(&mut stdin, &mut stdout, workload);
+                    local_results.lock().unwrap().insert(index, result);
+                } else {
+                    break;
+                }
+            }
+        }))
     }
 
-    pool.join();
+    // pool.join();
+    for j in thread_joiners {
+        j.join().expect("terser worker thread should not panic");
+    }
 
     let mut result_list = vec![];
     let results = shared_results.lock().unwrap();

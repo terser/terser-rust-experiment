@@ -12,7 +12,6 @@ benchme = []
 
 [dependencies]
 swc_ecma_parser = "0.45.0"
-threadpool = "1.8.1"
 
 [dependencies.swc_common]
 version = "0.10"

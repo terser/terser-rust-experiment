@@ -3,6 +3,10 @@
 const assert = require('assert')
 const Terser = require('terser')
 
+// We need to use stderr to debug things,
+// because the protocol is over stdin/stdout
+console.log = console.error
+
 const waitForReadable = () => new Promise((resolve, reject) => {
   const ok = () => {
     resolve()
@@ -43,7 +47,7 @@ async function readLarge(n) {
     let bufs = [Buffer.from("")]
     let bufsLen = 0
 
-    process.stdin.on('data', data => {
+    const onData = data => {
       bufs.push(data)
       bufsLen += data.length
 
@@ -51,11 +55,12 @@ async function readLarge(n) {
 
       if (bufsLen === n) {
         resolve(Buffer.concat(bufs))
+        process.stdin.off('data', onData)
       }
-    })
-  })
+    }
 
-  process.stdin.pause()
+    process.stdin.on('data', onData)
+  })
 
   return readBuf
 }
@@ -71,20 +76,22 @@ const write = data => {
 }
 
 (async function main() {
-  const toRead = Number(await readSmall(32))
+  while (true) {
+    const toRead = Number(await readSmall(32))
 
-  const jsText = await readLarge(toRead)
+    const jsText = await readLarge(toRead)
 
-  const { code } = await Terser.minify(jsText.toString(), {
-    module: true,
-    mangle: false,
-    compress: true,
-  })
+    const { code } = await Terser.minify(jsText.toString(), {
+      module: true,
+      mangle: false,
+      compress: true,
+    })
 
-  const codeBuf = Buffer.from(code)
+    const codeBuf = Buffer.from(code)
 
-  await write(codeBuf.length.toString().padEnd(32, ' '))
-  await write(codeBuf)
+    await write(codeBuf.length.toString().padEnd(32, ' '))
+    await write(codeBuf)
+  }
 }()).catch(e => {
   console.error(e)
   process.exit(1)
