@@ -3,6 +3,7 @@ name = "js-gist"
 version = "0.1.0"
 authors = ["Fábio Santos <fabiosantosart@gmail.com>"]
 edition = "2018"
+default-run = "terser-rs-bin"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,6 +12,7 @@ benchme = []
 
 [dependencies]
 swc_ecma_parser = "0.45.0"
+threadpool = "1.8.1"
 
 [dependencies.swc_common]
 version = "0.10"
@@ -22,3 +24,9 @@ test = false
 bench = false
 path = "src/lib.rs"
 required-features = ["benchme"]
+
+[[bin]]
+name = "terser-rs-bin"
+test = false
+bench = false
+path = "src/lib.rs"

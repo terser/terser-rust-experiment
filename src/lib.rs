@@ -1,64 +1,68 @@
 #[macro_use]
 mod macros;
-mod chunk;
-mod chunk_to_string;
 
-use chunk::ChunkTree;
+mod call_terser;
+mod chunk;
+mod to_segments;
+
+use call_terser::call_terser;
+use chunk::{tt, ChunkTree};
+use std::time::Instant;
+use to_segments::to_segments;
+
+#[derive(Debug, PartialEq)]
+struct Timer {
+    timer_name: String,
+    start_time: Instant,
+}
+impl Timer {
+    fn new(timer_name: &str) -> Timer {
+        Timer {
+            timer_name: String::from(timer_name),
+            start_time: Instant::now(),
+        }
+    }
+}
+
+impl Drop for Timer {
+    fn drop(self: &mut Self) {
+        println!(
+            "⏱️  {}: {}ms",
+            self.timer_name,
+            self.start_time.elapsed().as_millis()
+        )
+    }
+}
+
+pub fn main() -> std::io::Result<()> {
+    // Minify a big file
+    let source = &std::fs::read_to_string(
+        "huge.js",
+        // "polyfill-mini.js",
+    )?;
+
+    let _timer = Timer::new("entire process");
+
+    let tokens = {
+        let _timer = Timer::new("tokenising");
+        &tt(source)
+    };
+
+    let segments = {
+        let _timer = Timer::new("calculating code segments");
+        to_segments(source)
+    };
+
+    {
+        let _timer = Timer::new("calling terser");
+        call_terser(segments)?;
+    };
+
+    Ok(())
+}
 
 #[cfg(feature = "benchme")]
+#[allow(dead_code)]
 fn main() {
-    let source = &std::fs::read_to_string(
-        "/home/fabio/devel/terser/memorygate/largeapp/0.6b230bcfa1a68fe8c36d.js",
-        // "polyfill-mini.js",
-    )
-    .unwrap();
-    println!("Tokenising");
-    let tokens = tt(source);
-    println!("Chunking");
-
-    let chunk_tree = chunk_tokens(tokens.as_slice(), source.chars().count() as u32);
-    let chunk_tree = combine_chunks(&chunk_tree);
-    debug_print_chunks(&chunk_tree, 0);
-
-    for chunk in insert_chunk_identifiers(&source, &chunk_tree) {
-        println!("✂️{}✂️", chunk.code_string);
-        println!("\n\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
-        println!("This was {} - {}", chunk.start, chunk.end);
-        println!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\n");
-    }
-
-    println!("chunk count: {}", get_chunk_count(&chunk_tree));
-}
-
-fn get_chunk_count(chunk: &ChunkTree) -> u64 {
-    1 + chunk
-        .children
-        .iter()
-        .fold(0, |accum, chunk| accum + get_chunk_count(chunk))
-}
-
-fn debug_print_chunks(chunk: &ChunkTree, level: usize) {
-    let ChunkTree {
-        start,
-        end,
-        children,
-    } = chunk;
-
-    let indent = String::from("  ").repeat(level);
-
-    println!(
-        "{}({:?} - {:?}) {}",
-        indent,
-        start,
-        end,
-        if children.len() > 0 { "[" } else { "" }
-    );
-
-    for child in children {
-        debug_print_chunks(&child, level + 1);
-    }
-
-    if children.len() > 0 {
-        println!("{}]", String::from("  ").repeat(level));
-    }
+    println!("TODO");
 }

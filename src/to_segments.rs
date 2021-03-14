@@ -1,5 +1,6 @@
 use crate::chunk::{chunk_tokens, tt, ChunkTree};
 
+#[derive(PartialEq, Debug)]
 pub enum Segment<'a> {
     Str(&'a str),
     Ident(usize),
@@ -39,7 +40,7 @@ fn insert_child_chunk_identifiers<'a, 'b>(
     return code_slices;
 }
 
-pub fn insert_chunk_identifiers<'a, 'b>(
+fn insert_chunk_identifiers<'a, 'b>(
     source: &'a str,
     chunk_tree: &ChunkTree,
     chunk_index: &'b mut usize,
@@ -55,25 +56,34 @@ pub fn insert_chunk_identifiers<'a, 'b>(
     code_slices
 }
 
-fn assert_chunk_identifiers(code: &str, result: Vec<&str>) {
-    let chunked = chunk_tokens(tt(code).as_slice(), code.chars().count() as u32);
-    let chunks = insert_chunk_identifiers(code, &chunked, &mut 0);
-    let with_idents: Vec<String> = chunks
-        .iter()
-        .map(|rope| {
-            let rope_strings: Vec<String> = rope
-                .iter()
-                .map(|segment| match segment {
-                    Segment::Str(s) => String::from(*s),
-                    Segment::Ident(id) => format!("chunk{}()", id),
-                })
-                .collect();
+pub fn to_segments<'a>(source: &'a str) -> Vec<Vec<Segment<'a>>> {
+    let chunked = chunk_tokens(tt(source).as_slice(), source.len() as u32);
+    let mut chunk_index = 0;
 
-            rope_strings.join("")
+    insert_chunk_identifiers(source, &chunked, &mut chunk_index)
+}
+
+fn join_segments(segments: &Vec<Segment>) -> String {
+    let seg_strings: Vec<String> = segments
+        .iter()
+        .map(|segment| match segment {
+            Segment::Str(s) => String::from(*s),
+            Segment::Ident(id) => format!("chunk{}()", id),
         })
         .collect();
 
-    assert_eq!(with_idents, result);
+    seg_strings.join("")
+}
+
+#[allow(dead_code)]
+fn assert_chunk_identifiers(code: &str, result: Vec<&str>) {
+    let with_segments = to_segments(code);
+    let joined: Vec<String> = with_segments
+        .iter()
+        .map(|segments| join_segments(&segments))
+        .collect();
+
+    assert_eq!(joined, result);
 }
 
 #[test]

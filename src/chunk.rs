@@ -31,9 +31,9 @@ static MIN_SIZE: u32 = 200;
 
 // Smaller chunk sizes for testing!
 #[cfg(test)]
-static MAX_COMBINED_SIZE: u32 = 20;
+static MAX_COMBINED_SIZE: u32 = 12;
 #[cfg(test)]
-static MAX_SIZE: u32 = 12;
+static MAX_SIZE: u32 = 10;
 #[cfg(test)]
 static MIN_SIZE: u32 = 4;
 
@@ -55,18 +55,15 @@ fn process_open_close(tokens: &[TokenAndSpan]) -> (usize, OpenOrClose) {
             // Skip name, parens
             for token in rest {
                 skip += 1;
-                match token {
-                    t!(Token::LParen) => open_parens += 1,
-                    t!(Token::RParen) => {
-                        open_parens -= 1;
-
-                        if open_parens == 0 {
-                            break;
-                        }
-                    }
-
-                    _ => {}
+                open_parens += match token {
+                    t!(Token::LParen) => 1,
+                    t!(Token::RParen) => -1,
+                    _ => 0,
                 };
+
+                if open_parens == 0 {
+                    break;
+                }
             }
 
             // Expect lbrace
@@ -78,6 +75,7 @@ fn process_open_close(tokens: &[TokenAndSpan]) -> (usize, OpenOrClose) {
             (skip, OpenOrClose::OpenChunk)
         }
 
+        [t!(Token::DollarLBrace), ..] => (1, OpenOrClose::OpenBrace),
         [t!(Token::LBrace), ..] => (1, OpenOrClose::OpenBrace),
         [t!(Token::RBrace), ..] => (1, OpenOrClose::Close),
         [t!(_), ..] => (1, OpenOrClose::Neither),
@@ -143,6 +141,7 @@ pub fn chunk_tokens(tokens: &[TokenAndSpan], code_end: u32) -> ChunkTree {
     }
 
     let (chunk, _) = chunk_tokens_inner(tokens);
+    let chunk = combine_chunks(&chunk);
 
     let ChunkTree { start, end, .. } = chunk;
 
@@ -157,7 +156,7 @@ pub fn chunk_tokens(tokens: &[TokenAndSpan], code_end: u32) -> ChunkTree {
     }
 }
 
-pub fn combine_chunks(chunk: &ChunkTree) -> ChunkTree {
+fn combine_chunks(chunk: &ChunkTree) -> ChunkTree {
     let len = |chunk: &ChunkTree| chunk.end - chunk.start;
     let combined_nonchild_len = |chunk: &ChunkTree| {
         len(&chunk)
@@ -206,7 +205,7 @@ pub fn tt(source: &str) -> Vec<TokenAndSpan> {
 }
 
 #[cfg(test)]
-fn assert_tokens_eq(code: &str, expected: ChunkTree) {
+fn assert_chunk_eq(code: &str, expected: ChunkTree) {
     let chunked = chunk_tokens(tt(code).as_slice(), code.chars().count() as u32);
 
     assert_eq!(chunked, expected);
@@ -238,7 +237,7 @@ fn test_no_tok() {
 
 #[test]
 fn test_one_tok() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "onetoken",
         ChunkTree {
             children: vec![],
@@ -250,7 +249,7 @@ fn test_one_tok() {
 
 #[test]
 fn test_arrow() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "()=>{()=>{hellooo}};",
         ChunkTree {
             start: 0,
@@ -270,7 +269,7 @@ fn test_arrow() {
 
 #[test]
 fn test_small_arrow() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "()=>{hi}",
         ChunkTree {
             start: 0,
@@ -282,7 +281,7 @@ fn test_small_arrow() {
 
 #[test]
 fn test_nest_arrows() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "()=>{12345;()=>{1234567};()=>{1234567}}",
         ChunkTree {
             start: 0,
@@ -309,7 +308,7 @@ fn test_nest_arrows() {
 
 #[test]
 fn test_garbage_at_end() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "()=>{123456789012}; garbage",
         ChunkTree {
             start: 0,
@@ -325,7 +324,7 @@ fn test_garbage_at_end() {
 
 #[test]
 fn test_classic_fn() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "(function(__a__, __b){hellooo})",
         ChunkTree {
             start: 0,
@@ -341,7 +340,7 @@ fn test_classic_fn() {
 
 #[test]
 fn test_missing_block() {
-    assert_tokens_eq(
+    assert_chunk_eq(
         "x({ not_block: true })",
         ChunkTree {
             start: 0,
@@ -355,7 +354,7 @@ fn test_missing_block() {
 fn test_end_comment() {
     let code = "() => { something_yas() }/**/";
 
-    assert_tokens_eq(
+    assert_chunk_eq(
         code,
         ChunkTree {
             start: 0,
@@ -375,4 +374,40 @@ fn test_end_comment() {
     assert_eq!(code[0..29], *code);
     assert_eq!(code[0..25], *"() => { something_yas() }");
     assert_eq!(code[8..23], *"something_yas()");
+}
+
+#[test]
+fn test_template_string() {
+    let code = "`${something_yas}`";
+
+    println!("{:?}", tt(code));
+
+    assert_chunk_eq(
+        code,
+        ChunkTree {
+            start: 0,
+            end: 18,
+            children: vec![],
+        },
+    );
+}
+
+#[test]
+fn test_combined_chunks_remove_useless_root() {
+    assert_eq!(
+        combine_chunks(&ChunkTree {
+            start: 0,
+            end: 11,
+            children: vec![ChunkTree {
+                start: 0,
+                end: 11,
+                children: vec![]
+            }]
+        }),
+        ChunkTree {
+            start: 0,
+            end: 11,
+            children: vec![]
+        }
+    )
 }
