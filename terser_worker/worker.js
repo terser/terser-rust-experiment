@@ -82,9 +82,10 @@ const write = data => {
     const jsText = await readLarge(toRead)
 
     const { code } = await Terser.minify(jsText.toString(), {
-      module: true,
       mangle: false,
-      compress: true,
+      compress: {
+        sequences: false
+      },
     })
 
     const codeBuf = Buffer.from(code)

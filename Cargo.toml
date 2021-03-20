@@ -9,6 +9,7 @@ default-run = "terser-rs-bin"
 
 [features]
 benchme = []
+test_all = []
 
 [dependencies]
 swc_ecma_parser = "0.45.0"

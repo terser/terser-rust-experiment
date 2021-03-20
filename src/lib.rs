@@ -4,7 +4,9 @@ mod macros;
 mod call_terser;
 mod chunk;
 mod get_minified_chunks;
+mod rope;
 mod to_segments;
+mod utils;
 
 use call_terser::call_terser;
 use std::time::Instant;
@@ -15,6 +17,7 @@ struct Timer {
     timer_name: String,
     start_time: Instant,
 }
+
 impl Timer {
     fn new(timer_name: &str) -> Timer {
         Timer {

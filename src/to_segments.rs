@@ -63,7 +63,7 @@ pub fn to_segments<'a>(source: &'a str) -> Vec<Vec<Segment<'a>>> {
     insert_chunk_identifiers(source, &chunked, &mut chunk_index)
 }
 
-fn join_segments(segments: &Vec<Segment>) -> String {
+fn test_join_segments(segments: &Vec<Segment>) -> String {
     let seg_strings: Vec<String> = segments
         .iter()
         .map(|segment| match segment {
@@ -80,7 +80,7 @@ fn assert_chunk_identifiers(code: &str, result: Vec<&str>) {
     let with_segments = to_segments(code);
     let joined: Vec<String> = with_segments
         .iter()
-        .map(|segments| join_segments(&segments))
+        .map(|segments| test_join_segments(&segments))
         .collect();
 
     assert_eq!(joined, result);
