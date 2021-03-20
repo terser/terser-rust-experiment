@@ -168,23 +168,19 @@ fn combine_chunks(chunk: &ChunkTree) -> ChunkTree {
                 .fold(0, |accum, child| accum + len(&child))
     };
 
-    let ChunkTree {
-        end,
-        start,
-        ref children,
-    } = *chunk;
-
     if len(&chunk) < MAX_COMBINED_SIZE {
         ChunkTree {
-            end,
-            start,
             children: vec![],
+            ..*chunk
         }
     } else if combined_nonchild_len(&chunk) < MAX_COMBINED_SIZE {
         ChunkTree {
-            end,
-            start,
-            children: children.iter().map(|child| combine_chunks(child)).collect(),
+            children: chunk
+                .children
+                .iter()
+                .map(|child| combine_chunks(child))
+                .collect(),
+            ..*chunk
         }
     } else {
         chunk.clone()

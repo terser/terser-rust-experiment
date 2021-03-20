@@ -51,16 +51,12 @@ pub fn main() -> std::io::Result<()> {
         to_segments(source)
     };
 
-    {
+    let minified = {
         let _timer = Timer::new("calling terser");
-        call_terser(segments)?;
+        call_terser(segments)?
     };
 
-    Ok(())
-}
+    std::fs::write("/tmp/out.js", minified)?;
 
-#[cfg(feature = "benchme")]
-#[allow(dead_code)]
-fn main() {
-    println!("TODO");
+    Ok(())
 }

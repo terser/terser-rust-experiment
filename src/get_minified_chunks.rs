@@ -4,8 +4,9 @@
 // This module has fns to wrap the chunk before minify, and unwrap after.
 
 use crate::rope::Rope;
+#[allow(unused_imports)]
 use crate::to_segments::{to_segments, Segment};
-use crate::utils::parse_number_at_start;
+use crate::utils::{parse_number_at_start, skip_open_braces};
 use std::collections::HashMap;
 
 #[cfg(not(test))]
@@ -54,7 +55,7 @@ pub fn get_workloads(chunks: Vec<Vec<Segment<'_>>>) -> Vec<String> {
     for (index, segment) in chunks.into_iter().enumerate() {
         let segment = wrap_chunk_to_minify(&segment, index);
 
-        if segment.len() + buffer.len() > WORKLOAD_MAX_LENGTH {
+        if segment.len() + buffer.len() > WORKLOAD_MAX_LENGTH || index == 0 {
             let program_string = format!("{}{}", buffer, segment);
 
             out.push(program_string);
@@ -81,13 +82,10 @@ fn strip_chunk_wrapper<'a>(chunk: &'a str) -> (usize, String) {
     // After the header there's a chunk ID with the function name
     let chunk_number = parse_number_at_start(chunk);
 
-    // Trim
-    let chunk = match (chunk.find("{"), chunk.find("}")) {
-        (Some(start), Some(end)) if start < end => &chunk[start + 1..end],
-        _ => {
-            panic!("corrupted chunks")
-        }
-    };
+    // Trim until open brace
+    let chunk = &chunk[chunk.find("{").unwrap() + 1..];
+
+    let chunk = &chunk[..skip_open_braces(chunk, 1)];
 
     (chunk_number, String::from(chunk))
 }
@@ -195,6 +193,11 @@ fn test_extract_result_from_bounded_chunk() {
         strip_chunk_wrapper("export function chunk42(){hi};END();"),
         (42, String::from("hi"))
     );
+
+    assert_eq!(
+        strip_chunk_wrapper("export function chunk42(){let x = {hi}};END();"),
+        (42, String::from("let x = {hi}"))
+    );
 }
 
 #[test]
@@ -228,7 +231,7 @@ fn test_get_result_map() {
     );
 
     assert_chunks_eq(
-        " export function chunk1(){hi}; END(); export function chunk2() {world} END() ",
+        " export function chunk1(){hi}; END(); export function chunk2() {world} END(); ",
         vec![(1, "hi"), (2, "world")],
     );
 }
@@ -236,4 +239,29 @@ fn test_get_result_map() {
 #[test]
 fn test_get_one_workload() {
     assert_eq!(get_workloads(to_segments("hi")), vec!["hi"])
+}
+
+#[test]
+fn test_multiple_workloads() {
+    let workloads = get_workloads(to_segments(
+        "hello () => { return 'large function' } and this is the end",
+    ));
+
+    assert_eq!(
+        workloads,
+        vec![
+            "hello () => { chunk1() } and this is the end",
+            "export function chunk1(){\n\nreturn 'large function'\n\n};END();"
+        ]
+    );
+
+    assert_eq!(
+        get_minified_chunks(&workloads[0], 0),
+        to_map(vec![(0, "hello () => { chunk1() } and this is the end")])
+    );
+
+    assert_eq!(
+        get_minified_chunks(&workloads[1], 1),
+        to_map(vec![(1, "\n\nreturn 'large function'\n\n")])
+    )
 }
